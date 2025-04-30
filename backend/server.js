@@ -5,6 +5,7 @@ import cors from "cors";
 import { config } from "dotenv";
 import productRouter from "./routes/productRoutes.js";
 import {sql} from "./config/db.js";
+import { aj } from "./lib/arcjet.js";
 
 config();
 
@@ -16,6 +17,39 @@ app.use(cors());
 app.use(helmet());//helmet is a security middleware that helps securing your application bu setting up different http headers
 app.use(morgan("dev"));//morgan is a middleware that logs the http requests
 
+//apply arcjet rate-limiting to all routes
+app.use(async(req,res,next)=>{
+    try {
+        const decision=await aj.protect(req,{
+            requested:1 //this specifies that each request consumes 1 token
+        });
+
+        if(decision.isDenied())
+        {
+            if(decision.reason.isRateLimit())
+            {
+                return res.status(429).json({message:"Too Many Requests."});
+            }
+            else if(decision.reason.isBot())
+            {
+                return res.status(429).json({message:"Bot access denied."});
+            }
+            else
+            {
+                return res.status(403).json({message:"Forbidden."});
+            }
+        }
+        //check for spoofed bots
+        if(decision.results.some((result)=>result.reason.isBot() && result.reason.isSpoofed())){
+            return res.status(403).json({error:"Spoofed Bot Detected."});
+        }
+        //if no case satisfies the  user can continue
+        next(); 
+    } catch (error) {
+        console.log("Arcject Error: ",error);
+        next(error);
+    }
+});
 
 app.use("/api/products",productRouter);
 
